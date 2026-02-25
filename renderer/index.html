@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>网页数据提取</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; padding: 24px; }
+    h1 { margin-bottom: 20px; font-size: 20px; }
+    .form { background: white; padding: 20px; border-radius: 8px; margin-bottom: 16px; }
+    label { display: block; margin-bottom: 4px; font-size: 13px; color: #555; }
+    input { width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 12px; font-size: 14px; }
+    button { background: #2563eb; color: white; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    button:disabled { background: #93c5fd; cursor: not-allowed; }
+    .result { background: white; padding: 20px; border-radius: 8px; min-height: 200px; }
+    .result h2 { font-size: 15px; margin-bottom: 12px; }
+    .item { padding: 8px 12px; background: #f8f8f8; border-left: 3px solid #2563eb; margin-bottom: 8px; font-size: 14px; }
+    .error { color: #dc2626; background: #fef2f2; padding: 12px; border-radius: 4px; }
+    .loading { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <h1>🔍 网页数据提取</h1>
+
+  <div class="form">
+    <label>目标 URL</label>
+    <input id="url" type="text" placeholder="https://example.com/page" />
+
+    <label>Cookie 文件路径（Netscape 格式）</label>
+    <input id="cookiePath" type="text" placeholder="/home/user/cookies.txt" />
+
+    <label>CSS 选择器（要提取的元素）</label>
+    <input id="selector" type="text" placeholder=".article-title, h2, table tr" />
+
+    <button id="btn" onclick="doScrape()">开始抓取</button>
+  </div>
+
+  <div class="result">
+    <h2>提取结果</h2>
+    <div id="output"><span class="loading">等待抓取...</span></div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
