@@ -1,5 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain } = require('electron')
-const cheerio = require('cheerio')
+const { app, BrowserWindow, BrowserView, ipcMain, session } = require('electron')
 const fs = require('fs')
 const path = require('path')
 
@@ -15,11 +14,9 @@ function createWindow() {
       contextIsolation: true,
     }
   })
-
   mainWindow.loadFile('renderer/index.html')
 }
 
-// 解析 Netscape 格式 cookie 文件（wget/curl 导出的标准格式）
 function parseNetscapeCookies(content) {
   const cookies = []
   for (const line of content.split('\n')) {
@@ -39,23 +36,63 @@ function parseNetscapeCookies(content) {
   return cookies
 }
 
-// 用 BrowserView 模拟真实浏览器访问（带完整 JS 执行环境）
-async function fetchWithBrowserView(targetUrl, cookies) {
+async function fetchWithClick(targetUrl, cookies, selector) {
   return new Promise((resolve, reject) => {
-    // 创建隐藏的 BrowserView
     hiddenView = new BrowserView({
-      webPreferences: {
-        contextIsolation: true,
-      }
+      webPreferences: { contextIsolation: true }
     })
-
-    // 加到主窗口但移到屏幕外（不显示）
     mainWindow.addBrowserView(hiddenView)
     hiddenView.setBounds({ x: -9999, y: -9999, width: 1280, height: 800 })
 
     const ses = hiddenView.webContents.session
+    const collectedResponses = []
 
-    // 注入 cookie
+    // ---- 拦截网络响应，收集 JSON ----
+    ses.webRequest.onCompleted({ urls: ['<all_urls>'] }, async (details) => {
+      const ct = (details.responseHeaders?.['content-type'] || []).join('')
+      if (!ct.includes('application/json') && !ct.includes('text/json')) return
+      // Electron 无法直接拿到响应体，需借助 debugger 协议（见下方）
+    })
+
+    // 用 Chrome DevTools Protocol 拿响应体
+    hiddenView.webContents.debugger.attach('1.3')
+    hiddenView.webContents.debugger.sendCommand('Network.enable')
+
+    const responseBodyMap = {}
+
+    hiddenView.webContents.debugger.on('message', async (_, method, params) => {
+      try {
+        if (method === 'Network.responseReceived') {
+          const ct = params.response.mimeType || ''
+          if (ct.includes('json')) {
+            responseBodyMap[params.requestId] = { url: params.response.url }
+          }
+        }
+        if (method === 'Network.loadingFinished') {
+          if (responseBodyMap[params.requestId]) {
+            try {
+              const result = await hiddenView.webContents.debugger.sendCommand(
+                'Network.getResponseBody',
+                { requestId: params.requestId }
+              )
+              const bodyStr = result.base64Encoded
+                ? Buffer.from(result.body, 'base64').toString('utf8')
+                : result.body
+              const json = JSON.parse(bodyStr)
+              collectedResponses.push({
+                url: responseBodyMap[params.requestId].url,
+                data: json,
+              })
+            } catch (_) {
+              // 解析失败跳过
+            }
+            delete responseBodyMap[params.requestId]
+          }
+        }
+      } catch (_) {}
+    })
+
+    // ---- 注入 cookie 并加载页面 ----
     const injectCookies = cookies.map(c =>
       ses.cookies.set({
         url: targetUrl,
@@ -73,23 +110,35 @@ async function fetchWithBrowserView(targetUrl, cookies) {
       hiddenView.webContents.loadURL(targetUrl)
     })
 
-    // 等页面加载完成（包括 JS 执行）
     hiddenView.webContents.once('did-finish-load', async () => {
       try {
-        // 等 JS 渲染完成（可根据需要调整时间）
+        // 等页面 JS 渲染
         await new Promise(r => setTimeout(r, 1500))
 
-        // 提取页面 HTML
-        const html = await hiddenView.webContents.executeJavaScript(
-          'document.documentElement.outerHTML'
-        )
+        // 点击 selector
+        const clicked = await hiddenView.webContents.executeJavaScript(`
+          (function() {
+            const el = document.querySelector(${JSON.stringify(selector)});
+            if (!el) return false;
+            el.click();
+            return true;
+          })()
+        `)
 
-        // 清理 BrowserView
+        if (!clicked) {
+          throw new Error(`未找到选择器对应的元素：${selector}`)
+        }
+
+        // 等待点击后的请求完成（可按需调整）
+        await new Promise(r => setTimeout(r, 3000))
+
+        // 清理
+        try { hiddenView.webContents.debugger.detach() } catch (_) {}
         mainWindow.removeBrowserView(hiddenView)
         hiddenView.webContents.destroy()
         hiddenView = null
 
-        resolve(html)
+        resolve(collectedResponses)
       } catch (err) {
         reject(err)
       }
@@ -101,22 +150,12 @@ async function fetchWithBrowserView(targetUrl, cookies) {
   })
 }
 
-// IPC：接收渲染进程的抓取请求
 ipcMain.handle('scrape', async (_, { url, cookieFilePath, selector }) => {
   try {
     const content = fs.readFileSync(cookieFilePath, 'utf8')
     const cookies = parseNetscapeCookies(content)
-
-    const html = await fetchWithBrowserView(url, cookies)
-
-    // 用 cheerio 提取数据
-    const $ = cheerio.load(html)
-    const results = []
-    $(selector).each((_, el) => {
-      results.push($(el).text().trim())
-    })
-
-    return { success: true, results, html: html.slice(0, 500) + '...' }
+    const responses = await fetchWithClick(url, cookies, selector)
+    return { success: true, results: responses }
   } catch (err) {
     return { success: false, error: err.message }
   }

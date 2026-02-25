@@ -12,7 +12,7 @@ async function doScrape() {
 
   btn.disabled = true
   btn.textContent = '抓取中...'
-  output.innerHTML = '<span class="loading">正在加载页面（含 JS 渲染）...</span>'
+  output.innerHTML = '<span class="loading">正在加载页面并点击元素，捕捉 JSON 响应...</span>'
 
   const res = await window.api.scrape({ url, cookieFilePath, selector })
 
@@ -25,11 +25,14 @@ async function doScrape() {
   }
 
   if (res.results.length === 0) {
-    output.innerHTML = '<div class="error">未找到匹配元素，请检查选择器</div>'
+    output.innerHTML = '<div class="error">点击后未捕捉到任何 JSON 响应</div>'
     return
   }
 
-  output.innerHTML = res.results
-    .map(t => `<div class="item">${t}</div>`)
-    .join('')
+  output.innerHTML = res.results.map((item, i) => `
+    <div class="item">
+      <strong>#${i + 1} ${item.url}</strong>
+      <pre>${JSON.stringify(item.data, null, 2)}</pre>
+    </div>
+  `).join('')
 }
