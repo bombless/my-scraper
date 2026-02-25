@@ -18,6 +18,86 @@
     .error { color: #dc2626; background: #fef2f2; padding: 12px; border-radius: 4px; }
     .loading { color: #6b7280; }
   </style>
+  <style>
+    .section {
+  margin-bottom: 20px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 15px;
+  background: #f9f9f9;
+}
+
+.section h3 {
+  margin-top: 0;
+  color: #333;
+  border-bottom: 2px solid #007acc;
+  padding-bottom: 8px;
+}
+
+.network-item {
+  margin: 10px 0;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.request-header {
+  background: #2c3e50;
+  color: white;
+  padding: 8px 12px;
+  font-family: monospace;
+  font-size: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.method {
+  background: #e74c3c;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: bold;
+}
+
+.url {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: bold;
+}
+
+.status-200 { background: #27ae60; }
+.status-404 { background: #e74c3c; }
+.status-500 { background: #c0392b; }
+
+.response-body {
+  background: #f4f4f4;
+  padding: 12px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.response-body pre {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.item {
+  padding: 8px;
+  background: white;
+  margin: 5px 0;
+  border-radius: 4px;
+  border-left: 3px solid #007acc;
+}
+  </style>
 </head>
 <body>
   <h1>🔍 网页数据提取</h1>

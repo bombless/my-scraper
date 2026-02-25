@@ -1,4 +1,7 @@
-const { app, BrowserWindow, BrowserView, ipcMain } = require('electron')
+const { app, BrowserWindow, ipcMain } = require('electron')
+const puppeteer = require('puppeteer') // 或 puppeteer-core
+
+
 const cheerio = require('cheerio')
 const fs = require('fs')
 const path = require('path')
@@ -19,106 +22,128 @@ function createWindow() {
   mainWindow.loadFile('renderer/index.html')
 }
 
-// 解析 Netscape 格式 cookie 文件（wget/curl 导出的标准格式）
-function parseNetscapeCookies(content) {
-  const cookies = []
-  for (const line of content.split('\n')) {
-    if (line.startsWith('#') || !line.trim()) continue
-    const parts = line.split('\t')
-    if (parts.length < 7) continue
-    cookies.push({
-      domain: parts[0],
-      httpOnly: parts[1] === 'TRUE',
-      path: parts[2],
-      secure: parts[3] === 'TRUE',
-      expirationDate: parseInt(parts[4]),
-      name: parts[5],
-      value: parts[6].trim(),
-    })
-  }
-  return cookies
-}
 
-// 用 BrowserView 模拟真实浏览器访问（带完整 JS 执行环境）
-async function fetchWithBrowserView(targetUrl, cookies) {
-  return new Promise((resolve, reject) => {
-    // 创建隐藏的 BrowserView
-    hiddenView = new BrowserView({
-      webPreferences: {
-        contextIsolation: true,
-      }
-    })
+// 存储网络响应的数组
+let networkResponses = []
 
-    // 加到主窗口但移到屏幕外（不显示）
-    mainWindow.addBrowserView(hiddenView)
-    hiddenView.setBounds({ x: -9999, y: -9999, width: 1280, height: 800 })
-
-    const ses = hiddenView.webContents.session
-
-    // 注入 cookie
-    const injectCookies = cookies.map(c =>
-      ses.cookies.set({
-        url: targetUrl,
-        name: c.name,
-        value: c.value,
-        domain: c.domain.replace(/^\./, ''),
-        path: c.path,
-        secure: c.secure,
-        httpOnly: c.httpOnly,
-        expirationDate: c.expirationDate,
-      })
-    )
-
-    Promise.all(injectCookies).then(() => {
-      hiddenView.webContents.loadURL(targetUrl)
-    })
-
-    // 等页面加载完成（包括 JS 执行）
-    hiddenView.webContents.once('did-finish-load', async () => {
-      try {
-        // 等 JS 渲染完成（可根据需要调整时间）
-        await new Promise(r => setTimeout(r, 1500))
-
-        // 提取页面 HTML
-        const html = await hiddenView.webContents.executeJavaScript(
-          'document.documentElement.outerHTML'
-        )
-
-        // 清理 BrowserView
-        mainWindow.removeBrowserView(hiddenView)
-        hiddenView.webContents.destroy()
-        hiddenView = null
-
-        resolve(html)
-      } catch (err) {
-        reject(err)
-      }
-    })
-
-    hiddenView.webContents.once('did-fail-load', (_, code, desc) => {
-      reject(new Error(`加载失败: ${desc} (${code})`))
-    })
-  })
-}
-
-// IPC：接收渲染进程的抓取请求
-ipcMain.handle('scrape', async (_, { url, cookieFilePath, selector }) => {
+ipcMain.handle('scrape-with-network', async (event, { url, cookieFilePath, selector }) => {
+  let browser = null
+  networkResponses = [] // 重置
+  
   try {
-    const content = fs.readFileSync(cookieFilePath, 'utf8')
-    const cookies = parseNetscapeCookies(content)
+    // 读取 cookies
+    let cookies = []
+    if (fs.existsSync(cookieFilePath)) {
+      const cookieData = fs.readFileSync(cookieFilePath, 'utf8')
+      cookies = JSON.parse(cookieData)
+    }
 
-    const html = await fetchWithBrowserView(url, cookies)
-
-    // 用 cheerio 提取数据
-    const $ = cheerio.load(html)
-    const results = []
-    $(selector).each((_, el) => {
-      results.push($(el).text().trim())
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
     })
 
-    return { success: true, results, html: html.slice(0, 500) + '...' }
-  } catch (err) {
-    return { success: false, error: err.message }
+    const page = await browser.newPage()
+    
+    // 设置 cookies
+    if (cookies.length > 0) {
+      await page.setCookie(...cookies)
+    }
+
+    // 监听所有网络响应
+    await page.setRequestInterception(true)
+    
+    page.on('request', (request) => {
+      request.continue() // 继续请求
+    })
+
+    page.on('response', async (response) => {
+      try {
+        const request = response.request()
+        const contentType = response.headers()['content-type'] || ''
+        
+        // 只处理 JSON 响应
+        if (contentType.includes('application/json')) {
+          const url = request.url()
+          const method = request.method()
+          const status = response.status()
+          
+          try {
+            const data = await response.json()
+            
+            const networkData = {
+              url: url,
+              method: method,
+              status: status,
+              timestamp: new Date().toISOString(),
+              data: data
+            }
+            
+            networkResponses.push(networkData)
+            
+            // 可选：实时发送到渲染进程
+            event.sender.send('network-response', networkData)
+            
+          } catch (e) {
+            // JSON 解析失败，忽略
+          }
+        }
+      } catch (error) {
+        console.error('网络监听错误:', error)
+      }
+    })
+
+    // 加载页面
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 })
+
+    // 等待选择器出现
+    await page.waitForSelector(selector, { timeout: 10000 })
+
+    // 获取点击前的元素信息
+    const elementInfo = await page.evaluate((sel) => {
+      const el = document.querySelector(sel)
+      if (!el) return null
+      return {
+        tagName: el.tagName,
+        text: el.textContent?.trim().substring(0, 100) || '',
+        href: el.href || null
+      }
+    }, selector)
+
+    // 点击元素（这会触发 AJAX/fetch）
+    await page.click(selector)
+
+    // 等待一段时间让 AJAX 请求完成（可根据需要调整）
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+    (async () => {
+      console.log(new Date().getSeconds());
+      await sleep(3000);
+      console.log(new Date().getSeconds());
+    })();
+    // 或者等待特定条件：await page.waitForResponse(response => response.url().includes('api'))
+
+    // 获取页面内容（可选）
+    const results = await page.evaluate((sel) => {
+      const elements = document.querySelectorAll(sel)
+      return Array.from(elements).map(el => el.textContent?.trim() || '')
+    }, selector)
+
+    await browser.close()
+
+    return {
+      success: true,
+      clickedElement: elementInfo,
+      networkResponses: networkResponses,
+      results: results
+    }
+
+  } catch (error) {
+    if (browser) await browser.close()
+    return {
+      success: false,
+      error: error.message
+    }
   }
 })
 
