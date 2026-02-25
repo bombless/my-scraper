@@ -1,3 +1,5 @@
+// renderer.js
+
 async function doScrape() {
   const url = document.getElementById('url').value.trim()
   const cookieFilePath = document.getElementById('cookiePath').value.trim()
@@ -11,8 +13,9 @@ async function doScrape() {
   }
 
   btn.disabled = true
-  btn.textContent = '抓取中...'
-  output.innerHTML = '<span class="loading">正在加载页面（含 JS 渲染）...</span>'
+  btn.textContent = '触发点击并捕获中...'
+  // 清空之前的输出
+  output.innerHTML = '<span class="loading">正在加载页面并等待点击响应（约需几秒钟）...</span>'
 
   const res = await window.api.scrape({ url, cookieFilePath, selector })
 
@@ -25,11 +28,17 @@ async function doScrape() {
   }
 
   if (res.results.length === 0) {
-    output.innerHTML = '<div class="error">未找到匹配元素，请检查选择器</div>'
+    output.innerHTML = '<div class="error">点击后未捕获到 JSON 格式的响应。</div>'
     return
   }
 
+  // 将结果格式化为 JSON 字符串显示
   output.innerHTML = res.results
-    .map(t => `<div class="item">${t}</div>`)
+    .map((item, index) => `
+      <div class="item" style="margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 10px;">
+        <strong>请求 #${index + 1} URL:</strong> <span style="font-size:12px; color:#666;">${item.url}</span>
+        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto;">${JSON.stringify(item.data, null, 2)}</pre>
+      </div>
+    `)
     .join('')
 }
